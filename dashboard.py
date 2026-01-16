@@ -155,6 +155,21 @@ keywords = [k.strip() for k in target_kws.split(',')]
 main_kw = keywords[0] if keywords else "오메가3"
 st.sidebar.divider()
 st.sidebar.success(f"현재 주 분석 키워드: **{main_kw}**")
+
+# 카테고리 선택 기능
+st.sidebar.subheader("🏷️ 쇼핑 카테고리 필터")
+DEFAULT_CATEGORIES = [
+    "식품", "건강/의료용품", "화장품/미용", "생활/건강",
+    "패션의류", "패션잡화", "스포츠/레저", "생활/가전",
+    "가구/인테리어", "디지털/가전", "출산/육아", "반려동물용품",
+    "도서/음반/DVD", "완구/취미", "문구/오피스", "차량/오토바이"
+]
+selected_categories = st.sidebar.multiselect(
+    "분석할 카테고리 선택 (전체 또는 일부)",
+    options=DEFAULT_CATEGORIES,
+    default=[],
+    help="선택하지 않으면 모든 카테고리를 분석합니다"
+)
 st.sidebar.caption("💡 10분마다 데이터가 최신화됩니다.")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 트렌드 비교", "🛍️ 실시간 쇼핑", "📝 실시간 블로그", "☕ 실시간 카페", "📰 실시간 뉴스"])
@@ -192,7 +207,8 @@ with tab1:
 
 # Tab 2: 실시간 쇼핑
 with tab2:
-    st.header(f"🛍️ '{main_kw}' 실시간 마켓 현황")
+    st.header(f"🛍️ '{main_kw}' 실시간 마켓 심층 분석")
+    st.caption("카테고리 필터링, 가격 분석, 브랜드 인사이트, 판매처 비교 등 종합적인 쇼핑 데이터 분석")
     df_shop, shop_err = fetch_realtime_shopping(main_kw)
     if shop_err:
         st.error(shop_err)
@@ -200,38 +216,263 @@ with tab2:
         # 데이터 전처리
         df_shop['lprice'] = pd.to_numeric(df_shop['lprice'], errors='coerce')
         df_shop['title'] = df_shop['title'].apply(clean_html)
-        
-        # KPI 섹션
-        m1, m2, m3 = st.columns(3)
-        m1.metric("실시간 수집 상품", f"{len(df_shop)}개")
-        m2.metric("시장 평균가", f"{int(df_shop['lprice'].mean()):,}원")
-        m3.metric("활성 판매처", f"{df_shop['mallName'].nunique()}개")
-        
-        col3, col4 = st.columns([2, 1])
-        with col3:
-            # 그래프 3: 가격 분포 히스토그램
-            fig3 = px.histogram(df_shop, x='lprice', nbins=30, 
-                                title=f"'{main_kw}' 최저가 분포 (현재)",
-                                labels={'lprice': '최저가(원)', 'count': '상품 수'},
-                                color_discrete_sequence=['#43a047'], template="simple_white")
-            st.plotly_chart(fig3, use_container_width=True)
-        with col4:
-            # 그래프 4: 몰별 비중 파이 차트
-            mall_counts = df_shop['mallName'].value_counts().head(10)
-            fig4 = px.pie(values=mall_counts.values, names=mall_counts.index, 
-                          title="주요 판매 쇼핑몰 (Top 10)", hole=0.4,
-                          color_discrete_sequence=px.colors.sequential.Greens_r)
-            st.plotly_chart(fig4, use_container_width=True)
-            
+
+        # 카테고리 필터링 적용
+        df_filtered = df_shop.copy()
+        if selected_categories:
+            df_filtered = df_shop[df_shop['category1'].isin(selected_categories)]
+            if len(df_filtered) == 0:
+                st.warning(f"선택한 카테고리에 해당하는 상품이 없습니다. 전체 데이터를 표시합니다.")
+                df_filtered = df_shop.copy()
+            else:
+                st.info(f"선택한 카테고리: {', '.join(selected_categories)} (총 {len(df_filtered)}개 상품)")
+
+        df_filtered = df_filtered.dropna(subset=['lprice'])  # 가격 없는 상품 제거
+
+        # === 섹션 1: 향상된 KPI ===
         st.divider()
-        st.subheader("🛒 실시간 상위 노출 상품 리스트")
-        st.dataframe(df_shop[['title', 'lprice', 'mallName', 'category1', 'link']].head(50), 
-                     use_container_width=True)
-        
-        st.subheader("� 카테고리별 마켓 요약")
-        cat_agg = df_shop.groupby('category1')['lprice'].agg(['count', 'mean', 'max']).round(0)
-        cat_agg.columns = ['상품 수', '평균가', '최고가']
-        st.table(cat_agg)
+        st.markdown("### 📊 핵심 지표")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("수집 상품 수", f"{len(df_filtered):,}개")
+        m2.metric("평균 가격", f"{int(df_filtered['lprice'].mean()):,}원")
+        m3.metric("중앙값 가격", f"{int(df_filtered['lprice'].median()):,}원")
+        m4.metric("최저가", f"{int(df_filtered['lprice'].min()):,}원")
+        m5.metric("활성 판매처", f"{df_filtered['mallName'].nunique()}개")
+
+        # === 섹션 2: 가격 분포 및 통계 분석 ===
+        st.divider()
+        st.markdown("### 💰 가격 분포 및 통계 분석")
+
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            # 가격 분포 히스토그램 (향상)
+            fig_hist = px.histogram(
+                df_filtered, x='lprice', nbins=50,
+                title=f"'{main_kw}' 가격 분포 (총 {len(df_filtered)}개 상품)",
+                labels={'lprice': '최저가(원)', 'count': '상품 수'},
+                color_discrete_sequence=['#1976d2'],
+                marginal="box"  # 박스플롯 추가
+            )
+            fig_hist.add_vline(x=df_filtered['lprice'].mean(),
+                              line_dash="dash", line_color="red",
+                              annotation_text="평균", annotation_position="top")
+            fig_hist.add_vline(x=df_filtered['lprice'].median(),
+                              line_dash="dash", line_color="green",
+                              annotation_text="중앙값", annotation_position="top")
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+        with col2:
+            # 가격 통계 요약
+            st.markdown("##### 📈 가격 통계 요약")
+            price_stats_df = pd.DataFrame({
+                '지표': ['평균', '중앙값', '최소값', '최대값', '표준편차', 'Q1', 'Q3', '범위'],
+                '값': [
+                    f"{int(df_filtered['lprice'].mean()):,}원",
+                    f"{int(df_filtered['lprice'].median()):,}원",
+                    f"{int(df_filtered['lprice'].min()):,}원",
+                    f"{int(df_filtered['lprice'].max()):,}원",
+                    f"{int(df_filtered['lprice'].std()):,}원",
+                    f"{int(df_filtered['lprice'].quantile(0.25)):,}원",
+                    f"{int(df_filtered['lprice'].quantile(0.75)):,}원",
+                    f"{int(df_filtered['lprice'].max() - df_filtered['lprice'].min()):,}원"
+                ]
+            })
+            st.dataframe(price_stats_df, use_container_width=True, hide_index=True)
+
+        # === 섹션 3: 카테고리별 상세 분석 ===
+        st.divider()
+        st.markdown("### 📂 카테고리별 상세 분석")
+
+        col3, col4 = st.columns([2, 2])
+        with col3:
+            # 카테고리별 가격 박스플롯
+            cat_data = df_filtered.groupby('category1').filter(lambda x: len(x) >= 3)
+            if not cat_data.empty:
+                fig_box = px.box(
+                    cat_data, x='category1', y='lprice',
+                    title="카테고리별 가격 분포 (박스플롯)",
+                    labels={'category1': '카테고리', 'lprice': '가격(원)'},
+                    color='category1',
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig_box.update_xaxis(tickangle=-45)
+                st.plotly_chart(fig_box, use_container_width=True)
+
+        with col4:
+            # 카테고리별 상품 수 및 평균가
+            cat_summary = df_filtered.groupby('category1').agg({
+                'lprice': ['count', 'mean']
+            }).round(0)
+            cat_summary.columns = ['상품수', '평균가']
+            cat_summary = cat_summary.sort_values('상품수', ascending=False).head(10)
+
+            fig_cat = go.Figure()
+            fig_cat.add_trace(go.Bar(
+                name='상품 수', x=cat_summary.index, y=cat_summary['상품수'],
+                marker_color='lightblue', yaxis='y', offsetgroup=1
+            ))
+            fig_cat.add_trace(go.Scatter(
+                name='평균가', x=cat_summary.index, y=cat_summary['평균가'],
+                marker_color='red', yaxis='y2', mode='lines+markers'
+            ))
+            fig_cat.update_layout(
+                title="카테고리별 상품 수 & 평균가",
+                xaxis=dict(tickangle=-45),
+                yaxis=dict(title="상품 수", side="left"),
+                yaxis2=dict(title="평균가(원)", overlaying="y", side="right"),
+                legend=dict(x=0.01, y=0.99)
+            )
+            st.plotly_chart(fig_cat, use_container_width=True)
+
+        # === 섹션 4: 판매처(몰) 분석 ===
+        st.divider()
+        st.markdown("### 🏪 판매처(쇼핑몰) 분석")
+
+        col5, col6 = st.columns([2, 2])
+        with col5:
+            # 몰별 상품 수 Top 15
+            mall_counts = df_filtered['mallName'].value_counts().head(15)
+            fig_mall = px.bar(
+                x=mall_counts.values, y=mall_counts.index,
+                orientation='h',
+                title="주요 판매 쇼핑몰 Top 15",
+                labels={'x': '상품 수', 'y': '쇼핑몰'},
+                color=mall_counts.values,
+                color_continuous_scale='Viridis'
+            )
+            st.plotly_chart(fig_mall, use_container_width=True)
+
+        with col6:
+            # 몰별 평균가 비교
+            mall_avg = df_filtered.groupby('mallName')['lprice'].agg(['mean', 'count']).round(0)
+            mall_avg = mall_avg[mall_avg['count'] >= 5].sort_values('mean', ascending=False).head(10)
+
+            fig_mall_price = px.scatter(
+                mall_avg, x='count', y='mean',
+                size='count', color='mean',
+                hover_name=mall_avg.index,
+                title="판매처별 평균가 vs 상품 수 (5개 이상)",
+                labels={'count': '상품 수', 'mean': '평균가(원)'},
+                color_continuous_scale='RdYlGn_r'
+            )
+            st.plotly_chart(fig_mall_price, use_container_width=True)
+
+        # === 섹션 5: 가격대별 분석 ===
+        st.divider()
+        st.markdown("### 💵 가격대별 상품 분포")
+
+        # 가격대 구간 설정
+        max_price = df_filtered['lprice'].max()
+        if max_price <= 50000:
+            bins = [0, 10000, 20000, 30000, 40000, 50000, max_price]
+            labels = ['~1만', '1~2만', '2~3만', '3~4만', '4~5만', '5만~']
+        elif max_price <= 100000:
+            bins = [0, 20000, 40000, 60000, 80000, 100000, max_price]
+            labels = ['~2만', '2~4만', '4~6만', '6~8만', '8~10만', '10만~']
+        else:
+            bins = [0, 50000, 100000, 200000, 500000, max_price]
+            labels = ['~5만', '5~10만', '10~20만', '20~50만', '50만~']
+
+        df_filtered['price_range'] = pd.cut(df_filtered['lprice'], bins=bins, labels=labels, include_lowest=True)
+        price_range_counts = df_filtered['price_range'].value_counts().sort_index()
+
+        col7, col8 = st.columns(2)
+        with col7:
+            fig_range = px.bar(
+                x=price_range_counts.index, y=price_range_counts.values,
+                title="가격대별 상품 분포",
+                labels={'x': '가격대', 'y': '상품 수'},
+                color=price_range_counts.values,
+                color_continuous_scale='Blues'
+            )
+            st.plotly_chart(fig_range, use_container_width=True)
+
+        with col8:
+            fig_pie = px.pie(
+                values=price_range_counts.values,
+                names=price_range_counts.index,
+                title="가격대별 비율",
+                hole=0.4,
+                color_discrete_sequence=px.colors.sequential.RdBu
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # === 섹션 6: 브랜드 분석 ===
+        st.divider()
+        st.markdown("### 🏷️ 브랜드 분석")
+
+        # 브랜드 추출 (간단한 방법: 대괄호 또는 첫 단어)
+        def extract_brand(title):
+            import re
+            # [브랜드] 형식 찾기
+            bracket_match = re.search(r'\[(.*?)\]', title)
+            if bracket_match:
+                return bracket_match.group(1)
+            # 첫 단어 추출
+            words = title.split()
+            if words:
+                return words[0]
+            return "기타"
+
+        df_filtered['brand'] = df_filtered['title'].apply(extract_brand)
+        brand_analysis = df_filtered.groupby('brand').agg({
+            'lprice': ['count', 'mean', 'min', 'max']
+        }).round(0)
+        brand_analysis.columns = ['상품수', '평균가', '최저가', '최고가']
+        brand_analysis = brand_analysis[brand_analysis['상품수'] >= 3].sort_values('상품수', ascending=False).head(15)
+
+        col9, col10 = st.columns([2, 1])
+        with col9:
+            fig_brand = px.bar(
+                brand_analysis, x=brand_analysis.index, y='상품수',
+                title="주요 브랜드 Top 15 (3개 이상)",
+                labels={'x': '브랜드', 'index': '브랜드', '상품수': '상품 수'},
+                color='평균가',
+                color_continuous_scale='Sunset'
+            )
+            fig_brand.update_xaxis(tickangle=-45)
+            st.plotly_chart(fig_brand, use_container_width=True)
+
+        with col10:
+            st.markdown("##### 브랜드 통계")
+            st.dataframe(brand_analysis, use_container_width=True)
+
+        # === 섹션 7: 카테고리별 TOP 상품 ===
+        st.divider()
+        st.markdown("### ⭐ 카테고리별 인기 상품 (최저가 기준)")
+
+        top_cats = df_filtered['category1'].value_counts().head(5).index
+        for cat in top_cats:
+            with st.expander(f"📦 {cat} - Top 10 상품"):
+                cat_products = df_filtered[df_filtered['category1'] == cat].nsmallest(10, 'lprice')
+                display_df = cat_products[['title', 'lprice', 'mallName', 'link']].copy()
+                display_df['lprice'] = display_df['lprice'].apply(lambda x: f"{int(x):,}원")
+                display_df.columns = ['상품명', '최저가', '판매처', '링크']
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # === 섹션 8: 전체 상품 리스트 ===
+        st.divider()
+        st.markdown("### 🛒 전체 상품 리스트")
+
+        if 'brand' in df_filtered.columns:
+            display_all = df_filtered[['title', 'lprice', 'mallName', 'category1', 'brand', 'link']].copy()
+            display_all['lprice'] = display_all['lprice'].apply(lambda x: f"{int(x):,}원")
+            display_all.columns = ['상품명', '최저가', '판매처', '카테고리', '브랜드', '링크']
+        else:
+            display_all = df_filtered[['title', 'lprice', 'mallName', 'category1', 'link']].copy()
+            display_all['lprice'] = display_all['lprice'].apply(lambda x: f"{int(x):,}원")
+            display_all.columns = ['상품명', '최저가', '판매처', '카테고리', '링크']
+        st.dataframe(display_all.head(100), use_container_width=True, hide_index=True)
+
+        # === 섹션 9: 상세 카테고리 테이블 ===
+        st.divider()
+        st.markdown("### 📊 카테고리별 종합 통계")
+        cat_detail = df_filtered.groupby('category1').agg({
+            'lprice': ['count', 'mean', 'median', 'std', 'min', 'max']
+        }).round(0)
+        cat_detail.columns = ['상품수', '평균가', '중앙값', '표준편차', '최저가', '최고가']
+        cat_detail = cat_detail.sort_values('상품수', ascending=False)
+        st.dataframe(cat_detail, use_container_width=True)
 
 # Tab 3: 실시간 블로그
 with tab3:
