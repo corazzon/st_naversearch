@@ -1,32 +1,26 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import os
 import requests
 import json
+import os
 from datetime import datetime
 from dotenv import load_dotenv
 
-# --- 페이지 설정 ---
-st.set_page_config(
-    page_title="Naver API 실시간 데이터 대시보드",
-    page_icon="⚡",
-    layout="wide"
-)
+# 페이지 설정
+st.set_page_config(page_title="Naver Market Insights", layout="wide", page_icon="⚡")
 
-# --- CSS 스타일링 (세련된 다크/화이트 모음) ---
+# CSS 스타일링
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
-    .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-top: 4px solid #00c853; }
-    h1, h2, h3 { color: #1a237e; font-weight: 800; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    h1, h2, h3 { color: #1a237e; font-family: 'Outfit', sans-serif; }
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { 
-        height: 50px; 
-        background-color: #e8eaf6; 
-        border-radius: 8px 8px 0 0; 
-        padding: 0 25px;
+    .stTabs [data-baseweb="tab"] {
+        padding: 10px 20px;
+        background-color: #eee;
+        border-radius: 5px 5px 0 0;
         font-weight: 600;
     }
     .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 4px solid #3f51b5; color: #3f51b5; }
@@ -49,15 +43,12 @@ def get_api_keys():
     
     # 2. 로컬 .env 파일
     if not cid or not csec:
-        # 현재 파일의 디렉토리에 있는 .env 파일을 로드
         env_path = os.path.join(os.path.dirname(__file__), '.env')
         if os.path.exists(env_path):
-            # override=True를 설정하여 .env 파일 변경 시 서버 재시작 없이 반영되도록 함
             load_dotenv(env_path, override=True)
             cid = os.getenv('NAVER_CLIENT_ID')
             csec = os.getenv('NAVER_CLIENT_SECRET')
 
-    # 공백 및 따옴표 제거 (사용자 입력 실수 방지)
     if cid: cid = str(cid).strip().strip("'").strip('"')
     if csec: csec = str(csec).strip().strip("'").strip('"')
     
@@ -67,13 +58,13 @@ CLIENT_ID, CLIENT_SECRET = get_api_keys()
 HEADERS = {"X-Naver-Client-Id": CLIENT_ID, "X-Naver-Client-Secret": CLIENT_SECRET, "Content-Type": "application/json"}
 
 # --- 실시간 API 호출 함수 ---
-@st.cache_data(ttl=600)  # 10분 캐싱
-def fetch_realtime_trend(keywords):
+@st.cache_data(ttl=600)
+def fetch_realtime_trend(keywords, start_date, end_date):
     """네이버 검색어 트렌드 API 호출"""
     if not CLIENT_ID or not CLIENT_SECRET: return None, "인증 키가 설정되지 않았습니다."
     url = "https://openapi.naver.com/v1/datalab/search"
     body = {
-        "startDate": "2025-01-01", "endDate": datetime.now().strftime("%Y-%m-%d"),
+        "startDate": start_date, "endDate": end_date,
         "timeUnit": "date",
         "keywordGroups": [{"groupName": k, "keywords": [k]} for k in keywords]
     }
@@ -81,47 +72,125 @@ def fetch_realtime_trend(keywords):
     if res.status_code == 200:
         dfs = [pd.DataFrame(r['data']).assign(keyword=r['title']) for r in res.json()['results']]
         return pd.concat(dfs), None
-    return None, f"Trend API Error: {res.status_code} (인증 오류 가능성)" if res.status_code == 401 else f"Trend API Error: {res.status_code}"
+    return None, f"Trend API Error: {res.status_code}"
 
 @st.cache_data(ttl=600)
-def fetch_realtime_shopping(keyword):
-    """네이버 쇼핑 검색 API 호출"""
+def fetch_realtime_shopping(keywords):
+    """네이버 쇼핑 검색 API 호출 (다중 키워드 통합)"""
     if not CLIENT_ID or not CLIENT_SECRET: return None, "인증 키 미설정"
-    url = f"https://openapi.naver.com/v1/search/shop.json?query={keyword}&display=100"
-    res = requests.get(url, headers=HEADERS)
-    if res.status_code == 200:
-        return pd.DataFrame(res.json()['items']), None
-    return None, f"Shopping API Error: {res.status_code}"
+    all_items = []
+    for kw in keywords:
+        url = f"https://openapi.naver.com/v1/search/shop.json?query={kw}&display=100"
+        res = requests.get(url, headers=HEADERS)
+        if res.status_code == 200:
+            items = res.json().get('items', [])
+            for item in items:
+                item['search_keyword'] = kw
+            all_items.extend(items)
+    return pd.DataFrame(all_items) if all_items else None, None
 
 @st.cache_data(ttl=600)
-def fetch_realtime_blog(keyword):
-    """네이버 블로그 검색 API 호출"""
+def fetch_realtime_blog(keywords):
+    """네이버 블로그 검색 API 호출 (다중 키워드 통합)"""
     if not CLIENT_ID or not CLIENT_SECRET: return None, "인증 키 미설정"
-    url = f"https://openapi.naver.com/v1/search/blog.json?query={keyword}&display=100"
-    res = requests.get(url, headers=HEADERS)
-    if res.status_code == 200:
-        return pd.DataFrame(res.json()['items']), None
-    return None, f"Blog API Error: {res.status_code}"
+    all_items = []
+    for kw in keywords:
+        url = f"https://openapi.naver.com/v1/search/blog.json?query={kw}&display=100"
+        res = requests.get(url, headers=HEADERS)
+        if res.status_code == 200:
+            items = res.json().get('items', [])
+            for item in items:
+                item['search_keyword'] = kw
+            all_items.extend(items)
+    return pd.DataFrame(all_items) if all_items else None, None
 
 @st.cache_data(ttl=600)
-def fetch_realtime_cafe(keyword):
-    """네이버 카페 검색 API 호출"""
+def fetch_realtime_cafe(keywords):
+    """네이버 카페 검색 API 호출 (다중 키워드 통합)"""
     if not CLIENT_ID or not CLIENT_SECRET: return None, "인증 키 미설정"
-    url = f"https://openapi.naver.com/v1/search/cafearticle.json?query={keyword}&display=100"
-    res = requests.get(url, headers=HEADERS)
-    if res.status_code == 200:
-        return pd.DataFrame(res.json()['items']), None
-    return None, f"Cafe API Error: {res.status_code}"
+    all_items = []
+    for kw in keywords:
+        url = f"https://openapi.naver.com/v1/search/cafearticle.json?query={kw}&display=100"
+        res = requests.get(url, headers=HEADERS)
+        if res.status_code == 200:
+            items = res.json().get('items', [])
+            for item in items:
+                item['search_keyword'] = kw
+            all_items.extend(items)
+    return pd.DataFrame(all_items) if all_items else None, None
 
 @st.cache_data(ttl=600)
-def fetch_realtime_news(keyword):
-    """네이버 뉴스 검색 API 호출"""
+def fetch_realtime_news(keywords):
+    """네이버 뉴스 검색 API 호출 (다중 키워드 통합)"""
     if not CLIENT_ID or not CLIENT_SECRET: return None, "인증 키 미설정"
-    url = f"https://openapi.naver.com/v1/search/news.json?query={keyword}&display=100"
-    res = requests.get(url, headers=HEADERS)
+    all_items = []
+    for kw in keywords:
+        url = f"https://openapi.naver.com/v1/search/news.json?query={kw}&display=100"
+        res = requests.get(url, headers=HEADERS)
+        if res.status_code == 200:
+            items = res.json().get('items', [])
+            for item in items:
+                item['search_keyword'] = kw
+            all_items.extend(items)
+    return pd.DataFrame(all_items) if all_items else None, None
+
+@st.cache_data(ttl=600)
+def fetch_shopping_insight_trend(cat_id, keywords, start_date, end_date):
+    """쇼핑인사이트 분야 내 키워드 클릭 트렌드 API 호출"""
+    if not CLIENT_ID or not CLIENT_SECRET: 
+        return None, "인증 키 미설정", None
+    
+    url = "https://openapi.naver.com/v1/datalab/shopping/category/keywords"
+    body = {
+        "startDate": start_date, 
+        "endDate": end_date,
+        "timeUnit": "date",
+        "category": cat_id,
+        "keyword": [{"name": k, "param": [k]} for k in keywords]
+    }
+    
+    res = requests.post(url, headers=HEADERS, data=json.dumps(body))
+    
+    # 응답 전체를 저장 (디버깅용)
+    response_data = None
+    try:
+        response_data = res.json()
+    except:
+        pass
+    
     if res.status_code == 200:
-        return pd.DataFrame(res.json()['items']), None
-    return None, f"News API Error: {res.status_code}"
+        results = response_data.get('results', []) if response_data else []
+        
+        if not results:
+            # 빈 결과 - API는 성공했지만 데이터가 없음
+            return pd.DataFrame(), None, response_data
+        
+        dfs = []
+        for r in results:
+            if 'data' in r and r['data']:
+                df = pd.DataFrame(r['data'])
+                df['keyword'] = r['title']
+                dfs.append(df)
+        
+        if dfs:
+            return pd.concat(dfs), None, response_data
+        else:
+            return pd.DataFrame(), None, response_data
+    else:
+        # API 에러
+        error_msg = f"API 오류 (상태코드: {res.status_code})"
+        if response_data and 'errorMessage' in response_data:
+            error_msg += f" - {response_data['errorMessage']}"
+        return None, error_msg, response_data
+
+
+@st.cache_data(ttl=600)
+def fetch_shopping_insight_demographics(cat_id):
+    """쇼핑인사이트 분야별 데모그래픽(성별/연령) 분석 데이터 호출"""
+    # 원칙적으로는 여러 API를 조합해야 하지만, 여기서는 성별/연령 비중 데이터를 시뮬레이션하거나 
+    # 쇼핑인사이트 카테고리 키워드 API의 응답을 활용할 수 있습니다. 
+    # 본 구현에서는 분야별 대표 데이터를 가져오는 로직을 구성합니다.
+    return None, "준비 중인 기능입니다."
 
 # --- 데이터 전처리 헬퍼 ---
 def clean_html(text):
@@ -129,13 +198,16 @@ def clean_html(text):
     if pd.isna(text): return ""
     return text.replace('<b>', '').replace('</b>', '').replace('&quot;', '"').replace('&lt;', '<').replace('&gt;', '>')
 
+@st.cache_data
+def convert_df(df):
+    """데이터프레임을 CSV로 변환 (한글 깨짐 방지 utf-8-sig)"""
+    return df.to_csv(index=False).encode('utf-8-sig')
+
 # --- 메인 UI ---
 st.title("⚡ 실시간 Naver Market Insights")
 st.caption("로컬 파일이 아닌, 네이버 API를 통해 실시간 데이터를 직접 분석합니다.")
 
 # 사이드바
-st.sidebar.header("🔍 실시간 분석 설정")
-
 # API 인증 상태 진단 (오류 시에만 상단 노출)
 if not CLIENT_ID or not CLIENT_SECRET:
     st.sidebar.error("❌ API 인증 키를 로드할 수 없습니다.")
@@ -150,23 +222,52 @@ if not CLIENT_ID or not CLIENT_SECRET:
         3. 공백이나 따옴표 없이 입력 권장
     """)
 
+st.sidebar.header("🔍 실시간 분석 설정")
+
 target_kws = st.sidebar.text_input("분석 키워드 (쉼표 구분)", "오메가3, 비타민D, 유산균")
-keywords = [k.strip() for k in target_kws.split(',')]
-main_kw = keywords[0] if keywords else "오메가3"
+keywords = [k.strip() for k in target_kws.split(',') if k.strip()]
+
 st.sidebar.divider()
-st.sidebar.success(f"현재 주 분석 키워드: **{main_kw}**")
+st.sidebar.subheader("📅 분석 기간 설정")
+today = datetime.now()
+jan_1st = datetime(today.year, 1, 1)
+
+date_range = st.sidebar.date_input(
+    "조회 기간 선택",
+    value=(jan_1st, today),
+    max_value=today,
+    help="시작일과 종료일을 선택하세요."
+)
+
+# 날짜 범위가 적절히 선택되었는지 확인
+if isinstance(date_range, tuple) and len(date_range) == 2:
+    start_date = date_range[0].strftime("%Y-%m-%d")
+    end_date = date_range[1].strftime("%Y-%m-%d")
+else:
+    # 한 날짜만 선택된 경우나 미선택 시 기본값 적용
+    start_date = jan_1st.strftime("%Y-%m-%d")
+    end_date = today.strftime("%Y-%m-%d")
+    st.sidebar.warning("시작일과 종료일을 모두 선택해주세요.")
+
+st.sidebar.divider()
+st.sidebar.info(f"선택된 키워드: {', '.join(keywords)}")
 st.sidebar.caption("💡 10분마다 데이터가 최신화됩니다.")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 트렌드 비교", "🛍️ 실시간 쇼핑", "📝 실시간 블로그", "☕ 실시간 카페", "📰 실시간 뉴스"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📈 트렌드 비교", "🛍️ 실시간 쇼핑", "📝 실시간 블로그", 
+    "☕ 실시간 카페", "📰 실시간 뉴스", "📊 쇼핑인사이트"
+])
 
 # Tab 1: 트렌드 비교
 with tab1:
-    st.header("실시간 검색어 활동 트렌드 (2025~)")
-    df_trend, err = fetch_realtime_trend(keywords)
+    st.header(f"📈 실시간 검색어 트렌드 ({start_date} ~ {end_date})")
+    df_trend, err = fetch_realtime_trend(keywords, start_date, end_date)
     if err:
         st.error(err)
     elif df_trend is not None:
         df_trend['period'] = pd.to_datetime(df_trend['period'])
+        
+        st.info(f"📊 총 **{len(df_trend):,}**개의 트렌드 데이터 포인트가 분석되었습니다.")
         
         # 그래프 1: 트렌드 라인 차트
         fig1 = px.line(df_trend, x='period', y='ratio', color='keyword', 
@@ -185,15 +286,24 @@ with tab1:
             st.plotly_chart(fig2, use_container_width=True)
         with col2:
             # 표 1: 요약 통계
-            st.subheader("� 데이터 요약 (상대 지표)")
+            st.subheader("📊 데이터 요약 (상대 지표)")
             summary = df_trend.groupby('keyword')['ratio'].agg(['mean', 'max', 'std']).round(2)
             summary.columns = ['평균', '최대치', '변동성']
             st.dataframe(summary, use_container_width=True)
 
+        st.subheader("� 전체 데이터 목록")
+        st.dataframe(df_trend, use_container_width=True)
+        st.download_button(
+            label="📥 트렌드 데이터 다운로드 (CSV)",
+            data=convert_df(df_trend),
+            file_name=f"trend_search_{start_date}_{end_date}.csv",
+            mime="text/csv"
+        )
+
 # Tab 2: 실시간 쇼핑
 with tab2:
-    st.header(f"🛍️ '{main_kw}' 실시간 마켓 현황")
-    df_shop, shop_err = fetch_realtime_shopping(main_kw)
+    st.header("🛍️ 통합 실시간 쇼핑 마켓 현황")
+    df_shop, shop_err = fetch_realtime_shopping(keywords)
     if shop_err:
         st.error(shop_err)
     elif df_shop is not None:
@@ -201,110 +311,399 @@ with tab2:
         df_shop['lprice'] = pd.to_numeric(df_shop['lprice'], errors='coerce')
         df_shop['title'] = df_shop['title'].apply(clean_html)
         
-        # KPI 섹션
+        # KPI 섹션 (통합)
         m1, m2, m3 = st.columns(3)
-        m1.metric("실시간 수집 상품", f"{len(df_shop)}개")
-        m2.metric("시장 평균가", f"{int(df_shop['lprice'].mean()):,}원")
+        m1.metric("수집된 전체 상품", f"{len(df_shop)}개")
+        m2.metric("전체 평균가", f"{int(df_shop['lprice'].mean()):,}원")
         m3.metric("활성 판매처", f"{df_shop['mallName'].nunique()}개")
         
         col3, col4 = st.columns([2, 1])
         with col3:
-            # 그래프 3: 가격 분포 히스토그램
-            fig3 = px.histogram(df_shop, x='lprice', nbins=30, 
-                                title=f"'{main_kw}' 최저가 분포 (현재)",
-                                labels={'lprice': '최저가(원)', 'count': '상품 수'},
-                                color_discrete_sequence=['#43a047'], template="simple_white")
+            # 그래프 3: 키워드별 가격 분포 박스 플롯
+            fig3 = px.box(df_shop, x='search_keyword', y='lprice', color='search_keyword',
+                          title="키워드별 최저가 분포 비교",
+                          labels={'lprice': '최저가(원)', 'search_keyword': '검색어'},
+                          template="simple_white")
             st.plotly_chart(fig3, use_container_width=True)
         with col4:
-            # 그래프 4: 몰별 비중 파이 차트
-            mall_counts = df_shop['mallName'].value_counts().head(10)
-            fig4 = px.pie(values=mall_counts.values, names=mall_counts.index, 
-                          title="주요 판매 쇼핑몰 (Top 10)", hole=0.4,
-                          color_discrete_sequence=px.colors.sequential.Greens_r)
+            # 그래프 4: 키워드별 상품 비중
+            kw_counts = df_shop['search_keyword'].value_counts()
+            fig4 = px.pie(values=kw_counts.values, names=kw_counts.index, 
+                          title="키워드별 데이터 비중", hole=0.4,
+                          color_discrete_sequence=px.colors.qualitative.Pastel)
             st.plotly_chart(fig4, use_container_width=True)
             
         st.divider()
-        st.subheader("🛒 실시간 상위 노출 상품 리스트")
-        st.dataframe(df_shop[['title', 'lprice', 'mallName', 'category1', 'link']].head(50), 
+        st.subheader("🛒 실시간 통합 인기 상품 리스트")
+        st.dataframe(df_shop[['search_keyword', 'title', 'lprice', 'mallName', 'category1', 'link']].head(100), 
                      use_container_width=True)
-        
-        st.subheader("� 카테고리별 마켓 요약")
-        cat_agg = df_shop.groupby('category1')['lprice'].agg(['count', 'mean', 'max']).round(0)
-        cat_agg.columns = ['상품 수', '평균가', '최고가']
-        st.table(cat_agg)
+        st.download_button(
+             label="📥 쇼핑 데이터 다운로드 (CSV)",
+             data=convert_df(df_shop),
+             file_name=f"realtime_shopping_{datetime.now().strftime('%Y%m%d')}.csv",
+             mime="text/csv"
+        )
 
 # Tab 3: 실시간 블로그
 with tab3:
-    st.header(f"📝 '{main_kw}' 실시간 블로그 반응")
-    df_blog, blog_err = fetch_realtime_blog(main_kw)
+    st.header("📝 실시간 블로그 반응 통합 분석")
+    df_blog, blog_err = fetch_realtime_blog(keywords)
     if blog_err:
         st.error(blog_err)
     elif df_blog is not None:
-        # 데이터 전처리
         df_blog['title'] = df_blog['title'].apply(clean_html)
         df_blog['postdate'] = pd.to_datetime(df_blog['postdate'], format='%Y%m%d', errors='coerce')
         
-        # 그래프 5: 일별 블로그 생성량 (Bar)
-        blog_daily = df_blog.groupby('postdate').size().reset_index(name='content_count')
-        fig5 = px.bar(blog_daily, x='postdate', y='content_count', 
-                      title="최근 일별 게시물 분포",
-                      labels={'postdate': '작성일', 'content_count': '게시물 수'},
-                      color_discrete_sequence=['#ff8f00'])
+        st.metric("수집된 블로그 문서", f"{len(df_blog):,}건")
+        
+        # 키워드별 게시물 추이
+        blog_daily = df_blog.groupby(['postdate', 'search_keyword']).size().reset_index(name='content_count')
+        fig5 = px.line(blog_daily, x='postdate', y='content_count', color='search_keyword',
+                       title="키워드별 최근 블로그 게시물 분포",
+                       labels={'postdate': '작성일', 'content_count': '게시물 수'},
+                       template="plotly_white")
         st.plotly_chart(fig5, use_container_width=True)
         
-        st.divider()
-        st.subheader("� 최신 블로그 콘텐츠 리스트")
-        st.dataframe(df_blog[['title', 'bloggername', 'postdate', 'link']].sort_values('postdate', ascending=False).head(50), 
-                     use_container_width=True)
+        col_blog1, col_blog2 = st.columns(2)
+        with col_blog1:
+            # 주요 블로거 랭킹
+            top_bloggers = df_blog['bloggername'].value_counts().head(10).reset_index()
+            top_bloggers.columns = ['블로거명', '게시물 수']
+            fig_top_blog = px.bar(top_bloggers, x='게시물 수', y='블로거명', orientation='h',
+                                  title="🏆 주요 활동 블로거 TOP 10",
+                                  color='게시물 수', color_continuous_scale='Magma')
+            st.plotly_chart(fig_top_blog, use_container_width=True)
+            
+        with col_blog2:
+            # 블로그 제목 키워드 분석
+            st.write("🔍 블로그 제목 핵심 단어")
+            all_blog_titles = " ".join(df_blog['title'].dropna().tolist())
+            blog_words = [w for w in all_blog_titles.split() if len(w) > 1 and w not in keywords]
+            from collections import Counter
+            blog_word_counts = Counter(blog_words).most_common(12)
+            if blog_word_counts:
+                df_blog_word = pd.DataFrame(blog_word_counts, columns=['단어', '빈도'])
+                fig_blog_word = px.bar(df_blog_word, x='단어', y='빈도',
+                                       title="블로그 제목 빈출 키워드",
+                                       color='빈도',
+                                       color_continuous_scale=px.colors.sequential.PuRd)
+                st.plotly_chart(fig_blog_word, use_container_width=True)
         
-        st.subheader("👤 활발한 정보 공유 블로거 TOP 10")
-        blogger_top = df_blog['bloggername'].value_counts().head(10).reset_index()
-        blogger_top.columns = ['블로거명', '포스팅 수']
-        st.table(blogger_top)
+        st.divider()
+        st.subheader("📖 최근 블로그 콘텐츠 통합 리스트")
+        st.dataframe(df_blog[['search_keyword', 'title', 'bloggername', 'postdate', 'link']].sort_values('postdate', ascending=False).head(100), 
+                     use_container_width=True)
+        st.download_button(
+             label="📥 블로그 데이터 다운로드 (CSV)",
+             data=convert_df(df_blog),
+             file_name=f"realtime_blog_{datetime.now().strftime('%Y%m%d')}.csv",
+             mime="text/csv"
+        )
 
 # Tab 4: 실시간 카페
 with tab4:
-    st.header(f"☕ '{main_kw}' 실시간 카페 커뮤니티 반응")
-    df_cafe, cafe_err = fetch_realtime_cafe(main_kw)
+    st.header("☕ 실시간 카페 커뮤니티 반응 통합")
+    df_cafe, cafe_err = fetch_realtime_cafe(keywords)
     if cafe_err:
         st.error(cafe_err)
     elif df_cafe is not None:
         df_cafe['title'] = df_cafe['title'].apply(clean_html)
         
-        # 카페 이름별 분포
-        cafe_counts = df_cafe['cafename'].value_counts().head(10).reset_index()
-        cafe_counts.columns = ['카페명', '게시물 수']
-        fig_cafe = px.bar(cafe_counts, x='게시물 수', y='카페명', orientation='h',
-                          title="주요 활동 카페 TOP 10",
-                          color='게시물 수', color_continuous_scale='Teal')
-        st.plotly_chart(fig_cafe, use_container_width=True)
+        st.metric("수집된 카페 게시글", f"{len(df_cafe):,}건")
+
+        # 1. 키워드별 카페 게시물 비중 (기존)
+        cafe_kw_counts = df_cafe['search_keyword'].value_counts().reset_index()
+        cafe_kw_counts.columns = ['키워드', '게시물 수']
+        
+        col_cafe1, col_cafe2 = st.columns(2)
+        with col_cafe1:
+            fig_cafe = px.bar(cafe_kw_counts, x='게시물 수', y='키워드', orientation='h',
+                              title="키워드별 카페 활동량 비교", color='키워드',
+                              color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig_cafe, use_container_width=True)
+            
+        with col_cafe2:
+            # 2. 주요 활동 카페 랭킹 (신규)
+            top_cafes = df_cafe['cafename'].value_counts().head(10).reset_index()
+            top_cafes.columns = ['카페명', '게시물 수']
+            fig_top_cafe = px.bar(top_cafes, x='게시물 수', y='카페명', orientation='h',
+                                  title="🏆 주요 활동 카페 TOP 10",
+                                  color='게시물 수', color_continuous_scale='Viridis')
+            st.plotly_chart(fig_top_cafe, use_container_width=True)
+
+        st.divider()
+        
+        # 3. 게시글 제목 핵심 키워드 분석 (신규)
+        st.subheader("🔍 카페 게시글 핵심 키워드 분석 (Top 15)")
+        all_titles = " ".join(df_cafe['title'].dropna().tolist())
+        # 단순 형태소 분석 대신 공백 분리 및 기본 불용어 처리
+        words = [w for w in all_titles.split() if len(w) > 1 and w not in keywords]
+        from collections import Counter
+        word_counts = Counter(words).most_common(15)
+        if word_counts:
+            df_word = pd.DataFrame(word_counts, columns=['단어', '빈도'])
+            fig_word = px.bar(df_word, x='단어', y='빈도', color='빈도',
+                              title="제목 내 빈출 단어", text_auto=True,
+                              color_continuous_scale='Blues')
+            st.plotly_chart(fig_word, use_container_width=True)
+            st.caption("💡 제목에서 추출한 단어 빈도입니다. '추천', '비교', '후기' 등 사용자 의도를 파악해 보세요.")
         
         st.divider()
-        st.subheader("👥 최신 카페 게시물 리스트")
-        st.dataframe(df_cafe[['title', 'cafename', 'cafeurl']].head(50), use_container_width=True)
+        st.subheader("👥 최신 통합 카페 게시물")
+        st.dataframe(df_cafe[['search_keyword', 'title', 'cafename', 'cafeurl']].head(100), use_container_width=True)
+        st.download_button(
+             label="📥 카페 데이터 다운로드 (CSV)",
+             data=convert_df(df_cafe),
+             file_name=f"realtime_cafe_{datetime.now().strftime('%Y%m%d')}.csv",
+             mime="text/csv"
+        )
 
 # Tab 5: 실시간 뉴스
 with tab5:
-    st.header(f"📰 '{main_kw}' 실시간 뉴스 이슈")
-    df_news, news_err = fetch_realtime_news(main_kw)
+    st.header("📰 실시간 최신 뉴스 통합 이슈")
+    df_news, news_err = fetch_realtime_news(keywords)
     if news_err:
         st.error(news_err)
     elif df_news is not None:
         df_news['title'] = df_news['title'].apply(clean_html)
         df_news['pubDate'] = pd.to_datetime(df_news['pubDate'], errors='coerce')
         
-        # 시간대별 뉴스 발행 분포
-        news_daily = df_news.groupby(df_news['pubDate'].dt.date).size().reset_index(name='news_count')
-        news_daily.columns = ['발행일', '뉴스 수']
-        fig_news = px.area(news_daily, x='발행일', y='뉴스 수', 
-                           title="최근 뉴스 발행 추이",
-                           color_discrete_sequence=['#d32f2f'])
+        st.metric("수집된 뉴스 기사", f"{len(df_news):,}건")
+        
+        # 시간대별 키워드 뉴스 발행 추이
+        news_daily = df_news.groupby([df_news['pubDate'].dt.date, 'search_keyword']).size().reset_index(name='news_count')
+        news_daily.columns = ['발행일', '키워드', '뉴스 수']
+        fig_news = px.bar(news_daily, x='발행일', y='뉴스 수', color='키워드', barmode='group',
+                          title="날짜별 뉴스 발행 현황",
+                          template="simple_white")
         st.plotly_chart(fig_news, use_container_width=True)
         
+        # 뉴스 제목 키워드 분석
+        st.subheader("🔍 실시간 뉴스 핵심 키워드 (Hot Topics)")
+        all_news_titles = " ".join(df_news['title'].dropna().tolist())
+        news_words = [w for w in all_news_titles.split() if len(w) > 1 and w not in keywords]
+        from collections import Counter
+        news_word_counts = Counter(news_words).most_common(15)
+        if news_word_counts:
+            df_news_word = pd.DataFrame(news_word_counts, columns=['단어', '빈도'])
+            fig_news_word = px.bar(df_news_word, x='빈도', y='단어', orientation='h',
+                                   title="뉴스 제목 내 상위 키워드", text_auto=True,
+                                   color='빈도', color_continuous_scale='Reds')
+            st.plotly_chart(fig_news_word, use_container_width=True)
+            st.caption("💡 뉴스의 핵심 단어를 통해 현재 시장의 주요 이슈를 파악해 보세요.")
+
         st.divider()
-        st.subheader("🗞️ 최신 관련 뉴스 리스트")
-        st.dataframe(df_news[['title', 'pubDate', 'link']].sort_values('pubDate', ascending=False).head(50), 
+        st.subheader("🗞️ 최신 관련 뉴스 통합 리스트")
+        st.dataframe(df_news[['search_keyword', 'title', 'pubDate', 'link']].sort_values('pubDate', ascending=False).head(100), 
                      use_container_width=True)
+        st.download_button(
+             label="📥 뉴스 데이터 다운로드 (CSV)",
+             data=convert_df(df_news),
+             file_name=f"realtime_news_{datetime.now().strftime('%Y%m%d')}.csv",
+             mime="text/csv"
+        )
+
+# Tab 6: 쇼핑인사이트
+with tab6:
+    st.header("📊 쇼핑인사이트 Deep Dive")
+    
+    # --- 쇼핑인사이트 설정 (탭 내부 상단으로 이동) ---
+    st.subheader("⚙️ 분석 분야 설정")
+    
+    # 대분류 카테고리만 정의
+    CAT_OPTIONS = {
+        "패션의류": "50000000",
+        "패션잡화": "50000001",
+        "화장품/미용": "50000002",
+        "디지털/가전": "50000003",
+        "가구/인테리어": "50000004",
+        "출산/육아": "50000005",
+        "식품": "50000006",
+        "스포츠/레저": "50000007",
+        "생활/건강": "50000008",
+        "여가/생활편의": "50000009",
+        "면세점": "50000010",
+        "도서": "50000011",
+        "직접 입력": "manual"
+    }
+    
+    cat_col1, cat_col2 = st.columns([1, 2])
+    
+    with cat_col1:
+        # 생활/건강(index=8)을 기본값으로 설정하여 '오메가3' 키워드와 매칭
+        selected_cat_name = st.selectbox("대분류 카테고리 선택", list(CAT_OPTIONS.keys()), index=8)
+    
+    with cat_col2:
+        if selected_cat_name == "직접 입력":
+            cat_id = st.text_input("카테고리 ID 직접 입력", "50000000")
+        else:
+            cat_id = CAT_OPTIONS[selected_cat_name]
+            st.info(f"선택된 분야: **{selected_cat_name}** (ID: `{cat_id}`)")
+
+    
+    st.divider()
+    
+    st.markdown(f"""
+    **쇼핑인사이트**는 네이버 쇼핑 내에서 발생하는 사용자 클릭 데이터를 기반으로 마켓 트렌드를 분석합니다.
+    - 선택 카테고리: **{selected_cat_name}** (ID: `{cat_id}`)
+    - 분석 키워드: **{', '.join(keywords)}**
+    """)
+    
+    st.subheader(f"📈 분야 내 키워드 클릭 트렌드 ({start_date} ~ {end_date})")
+    df_ins, ins_err, api_response = fetch_shopping_insight_trend(cat_id, keywords, start_date, end_date)
+    
+    # 디버깅 정보 표시 (expander)
+    with st.expander("🔍 API 요청/응답 정보 (디버깅)"):
+        st.write("**요청 정보:**")
+        st.json({
+            "URL": "https://openapi.naver.com/v1/datalab/shopping/category/keywords",
+            "카테고리 ID": cat_id,
+            "키워드": keywords,
+            "시작일": start_date,
+            "종료일": end_date,
+            "시간 단위": "date"
+        })
+        
+        if api_response:
+            st.write("**API 응답:**")
+            st.json(api_response)
+        else:
+            st.warning("API 응답 데이터가 없습니다.")
+    
+    # 에러 처리
+    if ins_err:
+        st.error(f"❌ API 호출 오류: {ins_err}")
+        st.info("""
+        **문제 해결 방법:**
+        - API 인증 키가 올바른지 확인하세요.
+        - 카테고리 ID가 유효한지 확인하세요.
+        - 위의 '🔍 API 요청/응답 정보'를 확인하여 상세 오류를 파악하세요.
+        """)
+    elif df_ins is None:
+        st.warning("⚠️ API 응답이 없습니다. 네트워크 연결을 확인하세요.")
+    elif df_ins.empty:
+        st.warning(f"⚠️ 선택하신 카테고리 **'{selected_cat_name}'** 에는 키워드 **{', '.join(keywords)}** 에 대한 클릭 데이터가 존재하지 않습니다.")
+        st.info("""
+        **데이터가 보이지 않는 이유:**
+        - **카테고리 불일치**: 키워드가 해당 카테고리에 속하지 않는 상품일 수 있습니다. (예: '원피스'를 '식품'에서 검색)
+        - **검색량 부족**: 해당 기간 내 클릭량이 집계 기준 미만일 수 있습니다.
+        
+        **해결 방법:**
+        1. **카테고리 변경**: 키워드에 맞는 올바른 카테고리를 선택해주세요.
+        2. **키워드 변경**: 더 일반적이거나 인기 있는 키워드로 시도해보세요.
+        """)
+    elif 'period' not in df_ins.columns:
+        st.error(f"❌ 예상치 못한 데이터 형식입니다. 컬럼: {df_ins.columns.tolist()}")
+        with st.expander("🔍 원본 데이터 확인"):
+            st.dataframe(df_ins)
+    else:
+        # 데이터 전처리
+        df_ins['period'] = pd.to_datetime(df_ins['period'])
+        
+        st.info(f"📊 총 **{len(df_ins):,}**개의 쇼핑 클릭 데이터 포인트가 분석되었습니다.")
+        
+        # 메인 트렌드 차트
+        fig_ins = px.line(df_ins, x='period', y='ratio', color='keyword',
+                          title="키워드별 쇼핑 클릭 지수 추이",
+                          template="plotly_white", 
+                          color_discrete_sequence=px.colors.qualitative.Vivid,
+                          markers=True)
+        fig_ins.update_layout(
+            hovermode="x unified",
+            xaxis_title="날짜",
+            yaxis_title="클릭 지수",
+            legend_title="키워드"
+        )
+        st.plotly_chart(fig_ins, use_container_width=True)
+        st.info("💡 클릭 지수는 기간 내 최대 수치를 100으로 둔 상대적 활동 지표입니다.")
+        
+        # 상세 분석 섹션
+        st.divider()
+        st.subheader("📊 키워드별 상세 분석")
+        
+        col_analysis1, col_analysis2 = st.columns(2)
+        
+        with col_analysis1:
+            # 키워드별 평균/최대/최소 통계
+            stats_df = df_ins.groupby('keyword')['ratio'].agg([
+                ('평균 클릭지수', 'mean'),
+                ('최대 클릭지수', 'max'),
+                ('최소 클릭지수', 'min'),
+                ('변동성(표준편차)', 'std')
+            ]).round(2).reset_index()
+            
+            st.write("**📈 키워드별 클릭 지수 통계**")
+            st.dataframe(stats_df, use_container_width=True, hide_index=True)
+            
+            # 평균 클릭지수 바차트
+            fig_avg = px.bar(stats_df, x='keyword', y='평균 클릭지수', 
+                            color='평균 클릭지수',
+                            title="키워드별 평균 클릭 지수 비교",
+                            text_auto='.1f',
+                            color_continuous_scale='Blues')
+            st.plotly_chart(fig_avg, use_container_width=True)
+        
+        with col_analysis2:
+            # 키워드별 피크 시점 찾기
+            peak_data = []
+            for kw in df_ins['keyword'].unique():
+                kw_data = df_ins[df_ins['keyword'] == kw]
+                peak_idx = kw_data['ratio'].idxmax()
+                peak_row = kw_data.loc[peak_idx]
+                peak_data.append({
+                    '키워드': kw,
+                    '피크 날짜': peak_row['period'].strftime('%Y-%m-%d'),
+                    '피크 지수': round(peak_row['ratio'], 2)
+                })
+            
+            peak_df = pd.DataFrame(peak_data)
+            st.write("**🔥 키워드별 최고 인기 시점**")
+            st.dataframe(peak_df, use_container_width=True, hide_index=True)
+            
+            # 최근 7일 vs 이전 7일 변화율
+            if len(df_ins) >= 14:
+                recent_change = []
+                for kw in df_ins['keyword'].unique():
+                    kw_data = df_ins[df_ins['keyword'] == kw].sort_values('period')
+                    if len(kw_data) >= 14:
+                        recent_7 = kw_data.tail(7)['ratio'].mean()
+                        prev_7 = kw_data.tail(14).head(7)['ratio'].mean()
+                        change_rate = ((recent_7 - prev_7) / prev_7 * 100) if prev_7 > 0 else 0
+                        recent_change.append({
+                            '키워드': kw,
+                            '최근 7일 평균': round(recent_7, 2),
+                            '이전 7일 평균': round(prev_7, 2),
+                            '변화율(%)': round(change_rate, 2)
+                        })
+                
+                if recent_change:
+                    change_df = pd.DataFrame(recent_change)
+                    st.write("**📊 최근 트렌드 변화 (최근 7일 vs 이전 7일)**")
+                    st.dataframe(change_df, use_container_width=True, hide_index=True)
+        
+        # 전체 데이터 테이블
+        st.divider()
+        with st.expander("📋 전체 데이터 보기"):
+            display_df = df_ins.copy()
+            display_df['period'] = display_df['period'].dt.strftime('%Y-%m-%d')
+            st.dataframe(display_df.sort_values(['keyword', 'period'], ascending=[True, False]), 
+                        use_container_width=True, hide_index=True)
+            st.download_button(
+                label="📥 쇼핑인사이트 데이터 다운로드 (CSV)",
+                data=convert_df(display_df),
+                file_name=f"shopping_insight_{start_date}_{end_date}.csv",
+                mime="text/csv"
+            )
+
+
+
+    st.divider()
+    st.subheader("💡 쇼핑인사이트 활용법")
+    st.markdown("""
+    1. **cat_id 확인 방법**: [네이버 쇼핑](https://shopping.naver.com)에서 특정 카테고리를 선택한 후 주소창의 `cat_id=` 뒤에 오는 숫자를 복사하세요.
+    2. **트렌드 분석**: 클릭 지수가 급증하는 시기는 해당 상품의 제철이거나 특정 이벤트가 발생한 시점입니다.
+    3. **비즈니스 접목**: 클릭 지수 변화에 맞춰 소상공인의 재고 확보 및 이벤트 마케팅을 최적화할 수 있습니다.
+    """)
 
 auth_status = "✅ 인증 완료" if (CLIENT_ID and CLIENT_SECRET) else "❌ 인증 미완료"
 st.sidebar.caption(f"상태: {auth_status} | 업데이트: {datetime.now().strftime('%H:%M:%S')}")
