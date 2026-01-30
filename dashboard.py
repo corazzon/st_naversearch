@@ -335,8 +335,23 @@ with tab2:
             
         st.divider()
         st.subheader("🛒 실시간 통합 인기 상품 리스트")
-        st.dataframe(df_shop[['search_keyword', 'title', 'lprice', 'mallName', 'category1', 'link']].head(100), 
-                     use_container_width=True)
+        st.dataframe(
+            df_shop[['search_keyword', 'title', 'lprice', 'mallName', 'category1', 'link']].head(100), 
+            column_config={
+                "link": st.column_config.LinkColumn(
+                    "링크",
+                    help="클릭시 해당 상품 페이지로 이동합니다.",
+                    validate="^https://.*",
+                    display_text="바로가기"
+                ),
+                "lprice": st.column_config.NumberColumn(
+                    "최저가",
+                    format="%d원"
+                )
+            },
+            use_container_width=True,
+            hide_index=True
+        )
         st.download_button(
              label="📥 쇼핑 데이터 다운로드 (CSV)",
              data=convert_df(df_shop),
@@ -391,8 +406,23 @@ with tab3:
         
         st.divider()
         st.subheader("📖 최근 블로그 콘텐츠 통합 리스트")
-        st.dataframe(df_blog[['search_keyword', 'title', 'bloggername', 'postdate', 'link']].sort_values('postdate', ascending=False).head(100), 
-                     use_container_width=True)
+        st.dataframe(
+            df_blog[['search_keyword', 'title', 'bloggername', 'postdate', 'link']].sort_values('postdate', ascending=False).head(100), 
+            column_config={
+                "link": st.column_config.LinkColumn(
+                    "링크",
+                    help="클릭시 해당 블로그로 이동합니다.",
+                    validate="^https://.*",
+                    display_text="바로가기"
+                ),
+                "postdate": st.column_config.DateColumn(
+                    "작성일",
+                    format="YYYY-MM-DD"
+                )
+            },
+            use_container_width=True,
+            hide_index=True
+        )
         st.download_button(
              label="📥 블로그 데이터 다운로드 (CSV)",
              data=convert_df(df_blog),
@@ -450,7 +480,19 @@ with tab4:
         
         st.divider()
         st.subheader("👥 최신 통합 카페 게시물")
-        st.dataframe(df_cafe[['search_keyword', 'title', 'cafename', 'cafeurl']].head(100), use_container_width=True)
+        st.dataframe(
+            df_cafe[['search_keyword', 'title', 'cafename', 'cafeurl']].head(100),
+            column_config={
+                "cafeurl": st.column_config.LinkColumn(
+                    "링크",
+                    help="클릭시 해당 카페 게시글로 이동합니다.",
+                    validate="^https://.*",
+                    display_text="바로가기"
+                )
+            },
+            use_container_width=True,
+            hide_index=True
+        )
         st.download_button(
              label="📥 카페 데이터 다운로드 (CSV)",
              data=convert_df(df_cafe),
@@ -494,8 +536,23 @@ with tab5:
 
         st.divider()
         st.subheader("🗞️ 최신 관련 뉴스 통합 리스트")
-        st.dataframe(df_news[['search_keyword', 'title', 'pubDate', 'link']].sort_values('pubDate', ascending=False).head(100), 
-                     use_container_width=True)
+        st.dataframe(
+            df_news[['search_keyword', 'title', 'pubDate', 'link']].sort_values('pubDate', ascending=False).head(100), 
+            column_config={
+                "link": st.column_config.LinkColumn(
+                    "링크",
+                    help="클릭시 해당 뉴스 기사로 이동합니다.",
+                    validate="^https://.*",
+                    display_text="바로가기"
+                ),
+                "pubDate": st.column_config.DatetimeColumn(
+                    "발행일시",
+                    format="YYYY-MM-DD HH:mm"
+                )
+            },
+            use_container_width=True,
+            hide_index=True
+        )
         st.download_button(
              label="📥 뉴스 데이터 다운로드 (CSV)",
              data=convert_df(df_news),
