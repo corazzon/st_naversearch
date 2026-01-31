@@ -59,8 +59,8 @@ HEADERS = {"X-Naver-Client-Id": CLIENT_ID, "X-Naver-Client-Secret": CLIENT_SECRE
 
 # --- 실시간 API 호출 함수 ---
 @st.cache_data(ttl=600)
-def fetch_realtime_trend(keywords, start_date, end_date):
-    """네이버 검색어 트렌드 API 호출"""
+def fetch_realtime_trend(keywords, start_date, end_date, gender=None, ages=None):
+    """네이버 검색어 트렌드 API 호출 (성별/연령 필터 추가)"""
     if not CLIENT_ID or not CLIENT_SECRET: return None, "인증 키가 설정되지 않았습니다."
     url = "https://openapi.naver.com/v1/datalab/search"
     body = {
@@ -68,6 +68,12 @@ def fetch_realtime_trend(keywords, start_date, end_date):
         "timeUnit": "date",
         "keywordGroups": [{"groupName": k, "keywords": [k]} for k in keywords]
     }
+    
+    if gender:
+        body["gender"] = gender
+    if ages and len(ages) > 0:
+        body["ages"] = ages
+        
     res = requests.post(url, headers=HEADERS, data=json.dumps(body))
     if res.status_code == 200:
         dfs = [pd.DataFrame(r['data']).assign(keyword=r['title']) for r in res.json()['results']]
@@ -251,6 +257,36 @@ else:
 
 st.sidebar.divider()
 st.sidebar.info(f"선택된 키워드: {', '.join(keywords)}")
+
+st.sidebar.divider()
+st.sidebar.subheader("📊 분석 모드 설정")
+analysis_mode = st.sidebar.radio(
+    "분석 모드", 
+    ["일반 트렌드", "성별 비교"], 
+    help="일반: 선택한 필터 기준 통합 추이\n성별: 남성 vs 여성 그룹별 상세 패턴 비교"
+)
+
+st.sidebar.subheader("👥 인구 통계 필터 (트렌드)")
+
+# 성별 선택 (성별 비교 모드일 때는 숨김/비활성)
+selected_gender = ""
+gender_option = "전체"
+if analysis_mode != "성별 비교":
+    gender_option = st.sidebar.radio("성별", ["전체", "남성", "여성"], horizontal=True)
+    gender_map = {"전체": "", "남성": "m", "여성": "f"}
+    selected_gender = gender_map[gender_option]
+else:
+    st.sidebar.info("성별 비교 모드: 남성 vs 여성을 비교합니다.")
+
+# 연령 선택
+age_options = ["0~12세", "13~18세", "19~24세", "25~29세", "30~34세", "35~39세", "40~44세", "45~49세", "50~54세", "55~59세", "60세 이상"]
+age_codes = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+age_ref = dict(zip(age_options, age_codes))
+code_to_age = dict(zip(age_codes, age_options))
+
+selected_ages = st.sidebar.multiselect("연령대 (다중 선택 가능)", age_options, placeholder="전체 연령")
+selected_age_codes = [age_ref[a] for a in selected_ages] if selected_ages else []
+
 st.sidebar.caption("💡 10분마다 데이터가 최신화됩니다.")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -261,42 +297,114 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # Tab 1: 트렌드 비교
 with tab1:
     st.header(f"📈 실시간 검색어 트렌드 ({start_date} ~ {end_date})")
-    df_trend, err = fetch_realtime_trend(keywords, start_date, end_date)
+    
+    # 필터 정보 표시
+    filter_info = []
+    if analysis_mode == "일반 트렌드":
+        if selected_gender: filter_info.append(f"성별: {gender_option}")
+        if selected_ages: filter_info.append(f"연령: {', '.join(selected_ages)}")
+    elif analysis_mode == "성별 비교":
+        filter_info.append("분석: 성별 비교 (남성 vs 여성)")
+        if selected_ages: filter_info.append(f"연령: {', '.join(selected_ages)}")
+        
+    if filter_info:
+        st.caption(f"적용된 필터: {' | '.join(filter_info)}")
+
+    # --- 데이터 수집 로직 ---
+    df_trend = None
+    err = None
+    
+    if analysis_mode == "일반 트렌드":
+        df_trend, err = fetch_realtime_trend(keywords, start_date, end_date, selected_gender, selected_age_codes)
+    
+    elif analysis_mode == "성별 비교":
+        # 남성/여성 각각 호출 후 병합
+        df_m, err_m = fetch_realtime_trend(keywords, start_date, end_date, "m", selected_age_codes)
+        df_f, err_f = fetch_realtime_trend(keywords, start_date, end_date, "f", selected_age_codes)
+        
+        dfs = []
+        if df_m is not None: 
+            df_m['gender'] = '남성'
+            dfs.append(df_m)
+        if df_f is not None: 
+            df_f['gender'] = '여성'
+            dfs.append(df_f)
+            
+        if dfs:
+            df_trend = pd.concat(dfs)
+        else:
+            err = err_m or err_f
+            
+    # --- 결과 시각화 ---
     if err:
         st.error(err)
-    elif df_trend is not None:
+    elif df_trend is not None and not df_trend.empty:
         df_trend['period'] = pd.to_datetime(df_trend['period'])
         
         st.info(f"📊 총 **{len(df_trend):,}**개의 트렌드 데이터 포인트가 분석되었습니다.")
         
-        # 그래프 1: 트렌드 라인 차트
-        fig1 = px.line(df_trend, x='period', y='ratio', color='keyword', 
-                       title="실시간 검색 트렌드 추이",
-                       template="plotly_white", color_discrete_sequence=px.colors.qualitative.Prism)
+        # 1. 그래프 그리기 (모드별 분기)
+        if analysis_mode == "일반 트렌드":
+            fig1 = px.line(df_trend, x='period', y='ratio', color='keyword', 
+                           title="실시간 검색 트렌드 추이",
+                           template="plotly_white", color_discrete_sequence=px.colors.qualitative.Prism)
+        
+        elif analysis_mode == "성별 비교":
+            # 색상은 키워드, col은 성별로 구분
+            fig1 = px.line(df_trend, x='period', y='ratio', color='keyword', facet_col='gender',
+                           title="성별 검색 트렌드 비교 (Max 100 상대지수)",
+                           template="plotly_white", color_discrete_sequence=px.colors.qualitative.Prism)
+            # subplot 제목 깔끔하게
+            fig1.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+            
         fig1.update_layout(hovermode="x unified")
         st.plotly_chart(fig1, use_container_width=True)
+        
+        # 비교 모드일 경우 안내 문구 추가
+        if analysis_mode != "일반 트렌드":
+            st.caption("""
+            ⚠️ **주의**: Naver DataLab 그래프의 y축(ratio)은 해당 조건 내 최댓값을 100으로 둔 **상대적 지표**입니다. 
+            서로 다른 그룹 간의 절대적인 검색량 크기 비교(예: 남성의 50과 여성의 50이 같은 검색량임)를 의미하지 않습니다. 
+            각 그룹 내에서의 추세 변화 패턴을 비교하는 목적으로 활용하세요.
+            """)
         
         col1, col2 = st.columns(2)
         with col1:
             # 그래프 2: 평균 검색량 바 차트
-            avg_df = df_trend.groupby('keyword')['ratio'].mean().reset_index().sort_values('ratio', ascending=False)
-            fig2 = px.bar(avg_df, x='keyword', y='ratio', color='keyword', 
-                          title="평균 검색 활동 점유율", text_auto='.1f',
-                          color_discrete_sequence=px.colors.qualitative.Safe)
+            # 그룹핑 기준이 모드에 따라 달라짐
+            group_cols = ['keyword']
+            if analysis_mode == "성별 비교": group_cols.append('gender')
+            
+            avg_df = df_trend.groupby(group_cols)['ratio'].mean().reset_index().sort_values('ratio', ascending=False)
+            
+            # 바차트 시각화
+            if analysis_mode == "일반 트렌드":
+                fig2 = px.bar(avg_df, x='keyword', y='ratio', color='keyword', 
+                              title="평균 검색 활동 점유율", text_auto='.1f',
+                              color_discrete_sequence=px.colors.qualitative.Safe)
+            else:
+                # 비교 모드에서는 Facet 활용
+                facet_c = 'gender' if analysis_mode == "성별 비교" else None
+                fig2 = px.bar(avg_df, x='keyword', y='ratio', color='gender', barmode='group',
+                              title="성별/키워드별 평균 검색 강도", text_auto='.1f',
+                              color_discrete_sequence=px.colors.qualitative.Safe)
+
             st.plotly_chart(fig2, use_container_width=True)
+            
         with col2:
             # 표 1: 요약 통계
             st.subheader("📊 데이터 요약 (상대 지표)")
-            summary = df_trend.groupby('keyword')['ratio'].agg(['mean', 'max', 'std']).round(2)
+            # 요약 통계 그룹핑
+            summary = df_trend.groupby(group_cols)['ratio'].agg(['mean', 'max', 'std']).round(2)
             summary.columns = ['평균', '최대치', '변동성']
             st.dataframe(summary, use_container_width=True)
 
-        st.subheader("� 전체 데이터 목록")
+        st.subheader("📋 전체 데이터 목록")
         st.dataframe(df_trend, use_container_width=True)
         st.download_button(
             label="📥 트렌드 데이터 다운로드 (CSV)",
             data=convert_df(df_trend),
-            file_name=f"trend_search_{start_date}_{end_date}.csv",
+            file_name=f"trend_search_{analysis_mode}_{start_date}_{end_date}.csv",
             mime="text/csv"
         )
 
