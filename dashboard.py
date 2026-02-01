@@ -258,34 +258,7 @@ else:
 st.sidebar.divider()
 st.sidebar.info(f"선택된 키워드: {', '.join(keywords)}")
 
-st.sidebar.divider()
-st.sidebar.subheader("📊 분석 모드 설정")
-analysis_mode = st.sidebar.radio(
-    "분석 모드", 
-    ["일반 트렌드", "성별 비교"], 
-    help="일반: 선택한 필터 기준 통합 추이\n성별: 남성 vs 여성 그룹별 상세 패턴 비교"
-)
 
-st.sidebar.subheader("👥 인구 통계 필터 (트렌드)")
-
-# 성별 선택 (성별 비교 모드일 때는 숨김/비활성)
-selected_gender = ""
-gender_option = "전체"
-if analysis_mode != "성별 비교":
-    gender_option = st.sidebar.radio("성별", ["전체", "남성", "여성"], horizontal=True)
-    gender_map = {"전체": "", "남성": "m", "여성": "f"}
-    selected_gender = gender_map[gender_option]
-else:
-    st.sidebar.info("성별 비교 모드: 남성 vs 여성을 비교합니다.")
-
-# 연령 선택
-age_options = ["0~12세", "13~18세", "19~24세", "25~29세", "30~34세", "35~39세", "40~44세", "45~49세", "50~54세", "55~59세", "60세 이상"]
-age_codes = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
-age_ref = dict(zip(age_options, age_codes))
-code_to_age = dict(zip(age_codes, age_options))
-
-selected_ages = st.sidebar.multiselect("연령대 (다중 선택 가능)", age_options, placeholder="전체 연령")
-selected_age_codes = [age_ref[a] for a in selected_ages] if selected_ages else []
 
 st.sidebar.caption("💡 10분마다 데이터가 최신화됩니다.")
 
@@ -297,6 +270,34 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # Tab 1: 트렌드 비교
 with tab1:
     st.header(f"📈 실시간 검색어 트렌드 ({start_date} ~ {end_date})")
+
+    with st.expander("📊 분석 설정 (모드 & 인구통계)", expanded=True):
+        col_mode, col_gender = st.columns(2)
+        with col_mode:
+            analysis_mode = st.radio(
+                "분석 모드", 
+                ["일반 트렌드", "성별 비교"], 
+                help="일반: 선택한 필터 기준 통합 추이\n성별: 남성 vs 여성 그룹별 상세 패턴 비교"
+            )
+        
+        with col_gender:
+            # 성별 선택
+            selected_gender = ""
+            gender_option = "전체"
+            if analysis_mode != "성별 비교":
+                gender_option = st.radio("성별", ["전체", "남성", "여성"], horizontal=True)
+                gender_map = {"전체": "", "남성": "m", "여성": "f"}
+                selected_gender = gender_map[gender_option]
+            else:
+                st.info("성별 비교 모드: 남성 vs 여성을 비교합니다.")
+        
+        # 연령 선택
+        age_options = ["0~12세", "13~18세", "19~24세", "25~29세", "30~34세", "35~39세", "40~44세", "45~49세", "50~54세", "55~59세", "60세 이상"]
+        age_codes = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]
+        age_ref = dict(zip(age_options, age_codes))
+        
+        selected_ages = st.multiselect("연령대 (다중 선택 가능)", age_options, placeholder="전체 연령")
+        selected_age_codes = [age_ref[a] for a in selected_ages] if selected_ages else []
     
     # 필터 정보 표시
     filter_info = []
