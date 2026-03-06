@@ -1,6 +1,9 @@
 # 안티그래비티로 네이버 API 활용 보고서와 대시보드 만들기 
 * 📺 유튜브 영상 ▶️ https://youtu.be/C8WxCXHSiko
 
+[![YouTube](https://img.youtube.com/vi/C8WxCXHSiko/maxresdefault.jpg)](https://youtu.be/C8WxCXHSiko)
+
+
 ## 네이버 API 발급 방법 안내
 
 * 네이버 검색 API, 데이터랩 API 등 네이버 오픈 API를 사용하기 위해 필요한 **애플리케이션 등록 및 인증 키 발급 절차**
